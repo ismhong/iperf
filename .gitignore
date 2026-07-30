@@ -31,3 +31,7 @@ examples/Makefile
 examples/mic
 examples/mis
 .vscode/
+/upx
+/upx.tar.xz
+/out/
+/iperf3-*-linux-musl
