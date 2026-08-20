@@ -107,6 +107,7 @@ typedef atomic_uint_fast64_t atomic_iperf_size_t;
 #define OPT_JSON_STREAM_FULL_OUTPUT 33
 #define OPT_SERVER_MAX_DURATION 34
 #define OPT_GSRO 35
+#define OPT_JSON_FILE 36
 
 /* states */
 #define TEST_START 1
@@ -447,6 +448,7 @@ enum {
     IEUNITVAL = 38,         // Invalid unit value or suffix
     IERVRSONLYSKIPRXCOPY = 39, // This OS does not support --skip-rx-copy
     IEBADDSCP = 40,         // Bad DSCP value
+    IEJSONFILESTREAM = 41,  // --json-file cannot be combined with --json-stream
     /* Test errors */
     IENEWTEST = 100,        // Unable to create a new test (check perror)
     IEINITTEST = 101,       // Test initialization failed (check perror)

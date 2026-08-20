@@ -938,6 +938,18 @@ iperf_on_test_start(struct iperf_test *test)
     if (test->json_stream) {
         JSONStream_Output(test, "start", test->json_start);
     }
+
+    /*
+     * In --json-file mode we build the JSON tree above (json_output == 1) and
+     * then re-run with json_output cleared to also emit the human-readable
+     * form to stdout.  The recursive call falls through the guard because
+     * json_output is 0 on the second pass.
+     */
+    if (test->json_file_output && test->json_output) {
+        test->json_output = 0;
+        iperf_on_test_start(test);
+        test->json_output = 1;
+    }
 }
 
 
@@ -1040,6 +1052,13 @@ iperf_on_connect(struct iperf_test *test)
         if (test->settings->rate)
             iperf_printf(test, "      Target Bitrate: %"PRIu64"\n", test->settings->rate);
     }
+
+    /* --json-file: re-run to also emit the human-readable form (see iperf_on_test_start). */
+    if (test->json_file_output && test->json_output) {
+        test->json_output = 0;
+        iperf_on_connect(test);
+        test->json_output = 1;
+    }
 }
 
 void
@@ -1112,6 +1131,7 @@ iperf_parse_arguments(struct iperf_test *test, int argc, char **argv)
         {"json", no_argument, NULL, 'J'},
         {"json-stream", no_argument, NULL, OPT_JSON_STREAM},
         {"json-stream-full-output", no_argument, NULL, OPT_JSON_STREAM_FULL_OUTPUT},
+        {"json-file", required_argument, NULL, OPT_JSON_FILE},
         {"version", no_argument, NULL, 'v'},
         {"server", no_argument, NULL, 's'},
         {"client", required_argument, NULL, 'c'},
@@ -1281,6 +1301,22 @@ iperf_parse_arguments(struct iperf_test *test, int argc, char **argv)
                 break;
             case OPT_JSON_STREAM_FULL_OUTPUT:
                 test->json_stream_full_output = 1;
+                break;
+            case OPT_JSON_FILE:
+                /*
+                 * Build the full JSON output (as with -J) but write it to the
+                 * given file, while still emitting the normal human-readable
+                 * report to stdout (or the --logfile).
+                 */
+                test->json_output = 1;
+                test->json_file_output = 1;
+                if (test->json_output_file != NULL)
+                    free(test->json_output_file);
+                test->json_output_file = strdup(optarg);
+                if (test->json_output_file == NULL) {
+                    i_errno = IENEWTEST;
+                    return -1;
+                }
                 break;
             case 'v':
                 printf("%s (cJSON %s)\n%s\n%s\n", version, cJSON_Version(), get_system_info(),
@@ -2022,17 +2058,34 @@ iperf_parse_arguments(struct iperf_test *test, int argc, char **argv)
 	    1 : round(test->settings->bitrate_limit_interval/test->stats_interval) );
     }
 
-    /* Show warning if JSON output is used with explicit report format */
-    if ((test->json_output) && (test->settings->unit_format != 'a')) {
-        warning("Report format (-f) flag ignored with JSON output (-J)");
+    /*
+     * --json-file writes the JSON to a separate file, so it can be combined
+     * with the human-readable report on stdout.  It is however incompatible
+     * with the streaming JSON modes, which emit JSON directly to stdout.
+     */
+    if (test->json_file_output && test->json_stream) {
+        i_errno = IEJSONFILESTREAM;
+        return -1;
     }
 
-    /* Show warning if JSON output is used with verbose or debug flags */
-    if (test->json_output && test->verbose) {
-        warning("Verbose output (-v) may interfere with JSON output (-J)");
-    }
-    if (test->json_output && test->debug) {
-        warning("Debug output (-d) may interfere with JSON output (-J)");
+    /*
+     * The warnings below are about JSON going to stdout and interfering with
+     * the human-readable output.  With --json-file the JSON goes to a file
+     * instead, so these do not apply.
+     */
+    if (!test->json_file_output) {
+        /* Show warning if JSON output is used with explicit report format */
+        if ((test->json_output) && (test->settings->unit_format != 'a')) {
+            warning("Report format (-f) flag ignored with JSON output (-J)");
+        }
+
+        /* Show warning if JSON output is used with verbose or debug flags */
+        if (test->json_output && test->verbose) {
+            warning("Verbose output (-v) may interfere with JSON output (-J)");
+        }
+        if (test->json_output && test->debug) {
+            warning("Debug output (-d) may interfere with JSON output (-J)");
+        }
     }
 
     return 0;
@@ -3344,6 +3397,13 @@ connect_msg(struct iperf_stream *sp)
         cJSON_AddItemToArray(sp->test->json_connected, iperf_json_printf("socket: %d  local_host: %s  local_port: %d  remote_host: %s  remote_port: %d", (int64_t) sp->socket, ipl, (int64_t) lport, ipr, (int64_t) rport));
     else
 	iperf_printf(sp->test, report_connected, sp->socket, ipl, lport, ipr, rport);
+
+    /* --json-file: re-run to also emit the human-readable form (see iperf_on_test_start). */
+    if (sp->test->json_file_output && sp->test->json_output) {
+        sp->test->json_output = 0;
+        connect_msg(sp);
+        sp->test->json_output = 1;
+    }
 }
 
 
@@ -3619,6 +3679,8 @@ iperf_free_test(struct iperf_test *test)
     free(test->settings);
     if (test->title)
 	free(test->title);
+    if (test->json_output_file)
+	free(test->json_output_file);
     if (test->extra_data)
 	free(test->extra_data);
     if (test->congestion)
@@ -4769,13 +4831,22 @@ iperf_print_results(struct iperf_test *test)
 		    char *str = cJSON_Print(test->json_server_output);
                     iperf_printf(test, "\nServer JSON output:\n%s\n", str);
 		    cJSON_free(str);
-                    cJSON_Delete(test->json_server_output);
-                    test->json_server_output = NULL;
+                    /*
+                     * In --json-file mode the JSON tree still needs the server
+                     * output when iperf_json_finish() runs, so only release it
+                     * here in the pure human-readable case.
+                     */
+                    if (!test->json_file_output) {
+                        cJSON_Delete(test->json_server_output);
+                        test->json_server_output = NULL;
+                    }
                 }
                 if (test->server_output_text) {
                     iperf_printf(test, "\nServer output:\n%s\n", test->server_output_text);
-	            free(test->server_output_text);
-                    test->server_output_text = NULL;
+                    if (!test->json_file_output) {
+	                free(test->server_output_text);
+                        test->server_output_text = NULL;
+                    }
                 }
             }
         }
@@ -4810,6 +4881,17 @@ iperf_reporter_callback(struct iperf_test *test)
             break;
     }
 
+    /*
+     * --json-file: the pass above populated the JSON tree (json_output == 1).
+     * Re-run with json_output cleared to also print the human-readable
+     * interval/summary report to stdout.  The second pass takes the text
+     * branches and does not touch the JSON tree.
+     */
+    if (test->json_file_output && test->json_output) {
+        test->json_output = 0;
+        iperf_reporter_callback(test);
+        test->json_output = 1;
+    }
 }
 
 /**
@@ -5521,6 +5603,19 @@ iperf_json_finish(struct iperf_test *test)
             }
             if (test->json_callback != NULL) {
                 (test->json_callback)(test, test->json_output_string);
+            } else if (test->json_file_output) {
+                /*
+                 * --json-file: the human-readable report has already been
+                 * written to test->outfile (stdout / --logfile); write the
+                 * JSON document to the requested file instead.
+                 */
+                FILE *json_file = fopen(test->json_output_file, "w");
+                if (json_file == NULL) {
+                    i_errno = IELOGFILE;
+                    return -1;
+                }
+                fprintf(json_file, "%s\n", test->json_output_string);
+                fclose(json_file);
             } else {
                 if (pthread_mutex_lock(&(test->print_mutex)) != 0) {
                     perror("iperf_json_finish: pthread_mutex_lock");

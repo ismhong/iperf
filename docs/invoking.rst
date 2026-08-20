@@ -186,7 +186,15 @@ the executable.
           --json-stream-full-output
                  Output in JSON format with JSON streams enabled. This flag  only
                  takes effect if the --json-stream option was also specified.
-   
+
+          --json-file file
+                 Write  the  full  JSON  output  (as  produced  by  --json) to the
+                 specified file, while still emitting the normal human-readable
+                 output on stdout (or the --logfile). This is useful when the
+                 human-readable output is needed for live viewing and the JSON
+                 output is needed for later processing. Cannot be combined with
+                 --json-stream or --json-stream-full-output.
+
           --logfile file
                  Send output to a log file.
    

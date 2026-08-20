@@ -225,6 +225,9 @@ iperf_strerror(int int_errno)
         case IEBADFORMAT:
             snprintf(errstr, len, "bad format specifier (valid formats are in the set [kmgtKMGT])");
             break;
+        case IEJSONFILESTREAM:
+            snprintf(errstr, len, "--json-file cannot be combined with --json-stream / --json-stream-full-output");
+            break;
         case IEBADPORT:
             snprintf(errstr, len, "port number must be between 1 and 65535 inclusive");
             break;
