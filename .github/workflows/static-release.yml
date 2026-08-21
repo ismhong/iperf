@@ -50,6 +50,7 @@ jobs:
                 build-base \
                 autoconf \
                 automake \
+                linux-headers \
                 openssl-dev \
                 openssl-libs-static
 
