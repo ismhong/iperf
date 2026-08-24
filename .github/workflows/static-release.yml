@@ -29,9 +29,22 @@ jobs:
             docker_platform: linux/arm64
             docker_image: alpine:3.20
 
+          # riscv64：GitHub 無原生 runner，走 QEMU/binfmt 模擬
+          - arch: riscv64
+            runner: ubuntu-latest
+            docker_platform: linux/riscv64
+            docker_image: alpine:3.20
+
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+
+      # riscv64 需要 QEMU user-mode 模擬才能執行 riscv64 Docker
+      - name: Setup QEMU binfmt (riscv64 only)
+        if: matrix.arch == 'riscv64'
+        uses: docker/setup-qemu-action@v3
+        with:
+          platforms: riscv64
 
       # 在 Alpine 容器內完成靜態編譯
       # Alpine 預設使用 musl libc，天生支援靜態連結
