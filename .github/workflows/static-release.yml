@@ -22,16 +22,36 @@ jobs:
             runner: ubuntu-latest
             docker_platform: linux/amd64
             docker_image: alpine:3.20
+            march: ""
+            mabi: ""
 
           # arm64：用 ubuntu arm runner，在 Alpine arm64 容器內編譯
           - arch: arm64
             runner: ubuntu-22.04-arm   # GitHub 提供的原生 arm64 runner
             docker_platform: linux/arm64
             docker_image: alpine:3.20
+            march: ""
+            mabi: ""
+
+          # riscv64：GitHub 無原生 runner，走 QEMU/binfmt 模擬
+          # 目標 CPU 只支援 rv64imac（無浮點單元），故指定 march/mabi
+          - arch: riscv64
+            runner: ubuntu-latest
+            docker_platform: linux/riscv64
+            docker_image: alpine:3.20
+            march: rv64imac
+            mabi: lp64
 
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+
+      # riscv64 需要 QEMU user-mode 模擬才能執行 riscv64 Docker
+      - name: Setup QEMU binfmt (riscv64 only)
+        if: matrix.arch == 'riscv64'
+        uses: docker/setup-qemu-action@v3
+        with:
+          platforms: riscv64
 
       # 在 Alpine 容器內完成靜態編譯
       # Alpine 預設使用 musl libc，天生支援靜態連結
@@ -56,6 +76,11 @@ jobs:
 
               # 使用專案內建的 --enable-static-bin 旗標
               # (定義於 config/iperf_config_static_bin.m4，會自動加上 --static)
+              # riscv64 限定 march/mabi（預設 rv64gc→imafdc，目標僅支援 imac）
+              MARGS="${{ matrix.march }}"
+              if [ -n "$MARGS" ]; then
+                export CFLAGS="-march=${{ matrix.march }} -mabi=${{ matrix.mabi }}"
+              fi
               ./configure --enable-static-bin
 
               make -j$(nproc)
