@@ -124,7 +124,7 @@ jobs:
           - arch: aarch64
             host: aarch64-w64-mingw32
             strip: aarch64-w64-mingw32-strip
-            llvm_mingw_url: https://github.com/mstorsjo/llvm-mingw/releases/download/20250106/llvm-mingw-20250106-ucrt-ubuntu-20.04-x86_64.tar.xz
+            llvm_mingw_url: https://github.com/mstorsjo/llvm-mingw/releases/download/20260812/llvm-mingw-20260812-ucrt-ubuntu-22.04-x86_64.tar.xz
 
     steps:
       - name: Checkout
@@ -148,7 +148,10 @@ jobs:
       # 用 autotools cross-compilation 配置
       - name: Configure
         run: |
-          ./configure \
+          ./bootstrap.sh
+          # MinGW 的 socket API 在 ws2_32，不是 POSIX 的 libsocket
+          # 透過 LIBS 讓 configure 的 AC_SEARCH_LIBS(socket) 能找到它
+          LIBS="-lws2_32" ./configure \
             --host=${{ matrix.host }} \
             --enable-static-bin \
             --with-openssl=no \
