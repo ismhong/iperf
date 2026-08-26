@@ -10,8 +10,11 @@ permissions:
   contents: write   # 允許上傳 Release artifacts
 
 jobs:
+  # ──────────────────────────────────────────────
+  # Linux 靜態編譯（Alpine musl, x86_64 / arm64 / riscv64）
+  # ──────────────────────────────────────────────
   build-static:
-    name: Static (${{ matrix.arch }})
+    name: Linux (${{ matrix.arch }})
     runs-on: ${{ matrix.runner }}
     strategy:
       fail-fast: false
@@ -100,10 +103,84 @@ jobs:
           path: dist/iperf3-${{ matrix.arch }}-linux-musl
           if-no-files-found: error
 
-  # 彙整兩個 arch 的產物，一起發佈到 GitHub Release
+  # ──────────────────────────────────────────────
+  # Windows 交叉編譯（MinGW, x86_64 / aarch64）
+  # 全部在 ubuntu runner 上完成，不需 Windows runner
+  # ──────────────────────────────────────────────
+  build-windows:
+    name: Windows (${{ matrix.arch }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # x86_64：用 Ubuntu 套件庫的 mingw-w64 (GCC)
+          - arch: x86_64
+            host: x86_64-w64-mingw32
+            strip: x86_64-w64-mingw32-strip
+
+          # aarch64 (ARM64)：用 llvm-mingw (Clang)，因 Debian/Ubuntu 官方
+          # mingw-w64 不支援 aarch64 目標
+          - arch: aarch64
+            host: aarch64-w64-mingw32
+            strip: aarch64-w64-mingw32-strip
+            llvm_mingw_url: https://github.com/mstorsjo/llvm-mingw/releases/download/20250106/llvm-mingw-20250106-ucrt-ubuntu-20.04-x86_64.tar.xz
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      # x86_64：用 apt 安裝穩定版 mingw-w64
+      - name: Install MinGW toolchain (x86_64)
+        if: matrix.arch == 'x86_64'
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq mingw-w64
+
+      # aarch64：下載 llvm-mingw（Clang 基礎，支援 arm64 Windows 目標）
+      - name: Download llvm-mingw (aarch64)
+        if: matrix.arch == 'aarch64'
+        run: |
+          wget -q "${{ matrix.llvm_mingw_url }}"
+          tar xf llvm-mingw-*.tar.xz
+          echo "$PWD/llvm-mingw/bin" >> $GITHUB_PATH
+
+      # 用 autotools cross-compilation 配置
+      - name: Configure
+        run: |
+          ./configure \
+            --host=${{ matrix.host }} \
+            --enable-static-bin \
+            --with-openssl=no \
+            --without-sctp \
+            CC=${{ matrix.host }}-gcc \
+            CFLAGS="-O2 -Wall"
+
+      - name: Build
+        run: make -j$(nproc)
+
+      - name: Strip & Verify
+        run: |
+          ${{ matrix.strip }} src/iperf3.exe
+          file src/iperf3.exe
+          mkdir -p dist
+          cp src/iperf3.exe dist/iperf3-${{ matrix.arch }}-windows.exe
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: iperf3-${{ matrix.arch }}-windows
+          path: dist/iperf3-${{ matrix.arch }}-windows.exe
+          if-no-files-found: error
+
+  # ──────────────────────────────────────────────
+  # 彙整所有 arch 的產物，一起發佈到 GitHub Release
+  # ──────────────────────────────────────────────
   release:
     name: Publish GitHub Release
-    needs: build-static
+    needs:
+      - build-static
+      - build-windows
     runs-on: ubuntu-latest
     # 只有推 tag 時才發布 Release；手動觸發只產生 artifact
     if: startsWith(github.ref, 'refs/tags/')
